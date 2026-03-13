@@ -236,7 +236,8 @@ function SajuTable({ result, dark }: { result: SajuResult; dark: boolean }) {
       label: '지지',
       render: (p) => {
         const el = BRANCH_ELEMENT[p.branch]
-        const sub = `${p.branchKo}, ${ELEMENTS_KO[el]}`
+        const pol = p.branch % 2 === 0 ? '양' : '음'
+        const sub = `${p.branchKo}, ${pol}${ELEMENTS_KO[el]}`
         return (
           <ElCard
             element={el}
