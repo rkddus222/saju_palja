@@ -43,12 +43,57 @@ interface FormState {
   gender: Gender
 }
 
-const HOUR_LABELS = ['자','축','인','묘','진','사','오','미','신','유','술','해']
+const HOUR_OPTIONS = [
+  { value: '23', label: '자시 (23:00~23:59, 익일 일주 반영)' },
+  { value: '0', label: '자시 (00:00~00:59)' },
+  { value: '1', label: '축시 (01:00~02:59)' },
+  { value: '3', label: '인시 (03:00~04:59)' },
+  { value: '5', label: '묘시 (05:00~06:59)' },
+  { value: '7', label: '진시 (07:00~08:59)' },
+  { value: '9', label: '사시 (09:00~10:59)' },
+  { value: '11', label: '오시 (11:00~12:59)' },
+  { value: '13', label: '미시 (13:00~14:59)' },
+  { value: '15', label: '신시 (15:00~16:59)' },
+  { value: '17', label: '유시 (17:00~18:59)' },
+  { value: '19', label: '술시 (19:00~20:59)' },
+  { value: '21', label: '해시 (21:00~22:59)' },
+] as const
+
+function getHourLabel(hour: string): string {
+  if (!hour || hour === 'unknown') return ''
+  const directMatch = HOUR_OPTIONS.find(option => option.value === hour)
+  if (directMatch) return directMatch.label.split(' ')[0]
+
+  // 구버전 저장값(0,2,4,...,22) 호환
+  const legacyMap: Record<string, string> = {
+    '2': '축시',
+    '4': '인시',
+    '6': '묘시',
+    '8': '진시',
+    '10': '사시',
+    '12': '오시',
+    '14': '미시',
+    '16': '신시',
+    '18': '유시',
+    '20': '술시',
+    '22': '해시',
+  }
+  return legacyMap[hour] ?? ''
+}
+
+function isValidDateParts(year: number, month: number, day: number): boolean {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false
+  const date = new Date(year, month - 1, day)
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  )
+}
 
 function formatBirthText(form: FormState): string {
-  const hourPart = form.hour && form.hour !== 'unknown'
-    ? ` ${HOUR_LABELS[Number(form.hour) / 2]}시`
-    : ''
+  const hourLabel = getHourLabel(form.hour)
+  const hourPart = hourLabel ? ` ${hourLabel}` : ''
   return `${form.year}.${form.month}.${form.day}${hourPart}`
 }
 
@@ -772,6 +817,10 @@ export const App: React.FC = () => {
       setError('출생 일은 1~31 사이로 입력해주세요.')
       return
     }
+    if (!isValidDateParts(year, month, day)) {
+      setError('실제 존재하는 날짜를 입력해주세요.')
+      return
+    }
 
     setError(null)
     setActiveProfileId(null)
@@ -846,8 +895,8 @@ export const App: React.FC = () => {
 
   const displayName = form.name.trim() || '의뢰인'
   const birthText = `${form.year}년 ${form.month}월 ${form.day}일${
-    form.hour && form.hour !== 'unknown'
-      ? ` ${HOUR_LABELS[Number(form.hour) / 2]}시`
+    getHourLabel(form.hour)
+      ? ` ${getHourLabel(form.hour)}`
       : ''
   }`
   const genderText = form.gender === 'female' ? '여성' : '남성'
@@ -959,18 +1008,9 @@ export const App: React.FC = () => {
                     onChange={handleChange}
                   >
                     <option value="">선택</option>
-                    <option value="0">자시 (23~01)</option>
-                    <option value="2">축시 (01~03)</option>
-                    <option value="4">인시 (03~05)</option>
-                    <option value="6">묘시 (05~07)</option>
-                    <option value="8">진시 (07~09)</option>
-                    <option value="10">사시 (09~11)</option>
-                    <option value="12">오시 (11~13)</option>
-                    <option value="14">미시 (13~15)</option>
-                    <option value="16">신시 (15~17)</option>
-                    <option value="18">유시 (17~19)</option>
-                    <option value="20">술시 (19~21)</option>
-                    <option value="22">해시 (21~23)</option>
+                    {HOUR_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                     <option value="unknown">모름</option>
                   </select>
                 </div>
@@ -1005,6 +1045,11 @@ export const App: React.FC = () => {
               <div className="form-group">
                 <span className="label">달력</span>
                 <div className="calendar-info">양력 (Solar)</div>
+              </div>
+
+              <div className="form-group">
+                <span className="label">시간 기준</span>
+                <div className="calendar-info">23:00~23:59 자시는 익일 일주 기준으로 계산</div>
               </div>
 
               <button type="submit" className="submit-btn">

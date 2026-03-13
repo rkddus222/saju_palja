@@ -43,20 +43,28 @@ const TWELVE_STAGES = ['장생','목욕','관대','건록','제왕','쇠','병',
 // 각 천간의 장생 지지 인덱스
 const STAGE_START = [11,6,2,9,2,9,5,0,8,3] as const
 
-// 절기 경계 (양력 근사치) - 각 절기가 시작되는 날짜와 해당 월 지지
-const SOLAR_TERM_BOUNDARIES: { month: number; day: number; branchIdx: number }[] = [
-  { month: 1, day: 6, branchIdx: 1 },   // 소한 → 축월
-  { month: 2, day: 4, branchIdx: 2 },   // 입춘 → 인월 (연 경계)
-  { month: 3, day: 6, branchIdx: 3 },   // 경칩 → 묘월
-  { month: 4, day: 5, branchIdx: 4 },   // 청명 → 진월
-  { month: 5, day: 6, branchIdx: 5 },   // 입하 → 사월
-  { month: 6, day: 6, branchIdx: 6 },   // 망종 → 오월
-  { month: 7, day: 7, branchIdx: 7 },   // 소서 → 미월
-  { month: 8, day: 8, branchIdx: 8 },   // 입추 → 신월
-  { month: 9, day: 8, branchIdx: 9 },   // 백로 → 유월
-  { month: 10, day: 8, branchIdx: 10 }, // 한로 → 술월
-  { month: 11, day: 7, branchIdx: 11 }, // 입동 → 해월
-  { month: 12, day: 7, branchIdx: 0 },  // 대설 → 자월
+interface SolarTermBoundary {
+  month: number
+  branchIdx: number
+  c20: number
+  c21: number
+  corrections?: Record<number, number>
+}
+
+// 12개 절입 기준. 20세기/21세기 보정 상수와 연도별 예외값을 함께 사용한다.
+const SOLAR_TERM_BOUNDARIES: SolarTermBoundary[] = [
+  { month: 1, branchIdx: 1, c20: 6.11, c21: 5.4055, corrections: { 2019: -1 } },   // 소한 → 축월
+  { month: 2, branchIdx: 2, c20: 4.6295, c21: 3.87, corrections: { 2021: 1 } },    // 입춘 → 인월
+  { month: 3, branchIdx: 3, c20: 6.3826, c21: 5.63 },                                // 경칩 → 묘월
+  { month: 4, branchIdx: 4, c20: 5.59, c21: 4.81 },                                  // 청명 → 진월
+  { month: 5, branchIdx: 5, c20: 6.318, c21: 5.52, corrections: { 2008: 1 } },      // 입하 → 사월
+  { month: 6, branchIdx: 6, c20: 6.5, c21: 5.678, corrections: { 1902: 1 } },       // 망종 → 오월
+  { month: 7, branchIdx: 7, c20: 7.928, c21: 7.108, corrections: { 2016: 1 } },     // 소서 → 미월
+  { month: 8, branchIdx: 8, c20: 8.35, c21: 7.5, corrections: { 2002: 1 } },        // 입추 → 신월
+  { month: 9, branchIdx: 9, c20: 8.44, c21: 7.646 },                                 // 백로 → 유월
+  { month: 10, branchIdx: 10, c20: 9.098, c21: 8.318 },                              // 한로 → 술월
+  { month: 11, branchIdx: 11, c20: 8.218, c21: 7.438, corrections: { 2089: 1 } },   // 입동 → 해월
+  { month: 12, branchIdx: 0, c20: 7.9, c21: 7.18, corrections: { 1954: 1 } },       // 대설 → 자월
 ]
 
 // --- 유틸리티 함수 ---
@@ -76,22 +84,38 @@ function getJulianDayNumber(year: number, month: number, day: number): number {
   )
 }
 
+function shiftDate(year: number, month: number, day: number, offsetDays: number) {
+  const date = new Date(Date.UTC(year, month - 1, day + offsetDays))
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  }
+}
+
+function getSolarTermBoundaryDay(year: number, term: SolarTermBoundary): number {
+  const yearInCentury = year % 100
+  const centuryConstant = year >= 2000 ? term.c21 : term.c20
+  let day = Math.floor(yearInCentury * 0.2422 + centuryConstant) - Math.floor((yearInCentury - 1) / 4)
+  day += term.corrections?.[year] ?? 0
+  return day
+}
+
 /** 입춘 기준 사주 연도 */
 function getSajuYear(year: number, month: number, day: number): number {
-  if (month < 2 || (month === 2 && day < 4)) return year - 1
+  const ipchunDay = getSolarTermBoundaryDay(year, SOLAR_TERM_BOUNDARIES[1])
+  if (month < 2 || (month === 2 && day < ipchunDay)) return year - 1
   return year
 }
 
-/** 절기 기준 월 지지 인덱스 */
-function getSajuMonthBranch(month: number, day: number): number {
-  // 역순으로 검색하여 가장 마지막으로 지난 절기를 찾음
+function getSajuMonthBranchForDate(year: number, month: number, day: number): number {
   for (let i = SOLAR_TERM_BOUNDARIES.length - 1; i >= 0; i--) {
     const t = SOLAR_TERM_BOUNDARIES[i]
-    if (month > t.month || (month === t.month && day >= t.day)) {
+    const boundaryDay = getSolarTermBoundaryDay(year, t)
+    if (month > t.month || (month === t.month && day >= boundaryDay)) {
       return t.branchIdx
     }
   }
-  // 1월 1~5일: 전년도 자월 (12월 대설 이후)
   return 0
 }
 
@@ -131,6 +155,25 @@ function getHourPillar(dayStem: number, hourBranch: number) {
     stem: (baseStem + hourBranch) % 10,
     branch: hourBranch,
   }
+}
+
+function normalizeHourInput(hourValue: number | null): { hourBranch: number; dayOffset: 0 | 1 } | null {
+  if (hourValue === null) return null
+  if (hourValue === 23) return { hourBranch: 0, dayOffset: 1 }
+  if (hourValue === 0) return { hourBranch: 0, dayOffset: 0 }
+  if (hourValue < 0 || hourValue > 23) return null
+
+  if (hourValue === 1 || hourValue === 2) return { hourBranch: 1, dayOffset: 0 }
+  if (hourValue === 3 || hourValue === 4) return { hourBranch: 2, dayOffset: 0 }
+  if (hourValue === 5 || hourValue === 6) return { hourBranch: 3, dayOffset: 0 }
+  if (hourValue === 7 || hourValue === 8) return { hourBranch: 4, dayOffset: 0 }
+  if (hourValue === 9 || hourValue === 10) return { hourBranch: 5, dayOffset: 0 }
+  if (hourValue === 11 || hourValue === 12) return { hourBranch: 6, dayOffset: 0 }
+  if (hourValue === 13 || hourValue === 14) return { hourBranch: 7, dayOffset: 0 }
+  if (hourValue === 15 || hourValue === 16) return { hourBranch: 8, dayOffset: 0 }
+  if (hourValue === 17 || hourValue === 18) return { hourBranch: 9, dayOffset: 0 }
+  if (hourValue === 19 || hourValue === 20) return { hourBranch: 10, dayOffset: 0 }
+  return { hourBranch: 11, dayOffset: 0 }
 }
 
 /** 십성 계산 */
@@ -314,13 +357,15 @@ export function calculateSaju(
   year: number,
   month: number,
   day: number,
-  hourValue: number | null, // 0,2,4,...,22 또는 null(모름)
+  hourValue: number | null, // 23,0,1,3,...,21 또는 구버전 0,2,4,...,22
 ): SajuResult {
   const sajuYear = getSajuYear(year, month, day)
   const yearP = getYearPillar(sajuYear)
-  const monthBranch = getSajuMonthBranch(month, day)
+  const monthBranch = getSajuMonthBranchForDate(year, month, day)
   const monthP = getMonthPillar(yearP.stem, monthBranch)
-  const dayP = getDayPillar(year, month, day)
+  const normalizedHour = normalizeHourInput(hourValue)
+  const adjustedDate = normalizedHour?.dayOffset ? shiftDate(year, month, day, 1) : { year, month, day }
+  const dayP = getDayPillar(adjustedDate.year, adjustedDate.month, adjustedDate.day)
   const voidBr = getVoidBranches(dayP.sexagenary)
   const dayStem = dayP.stem
 
@@ -347,8 +392,8 @@ export function calculateSaju(
   }
 
   let hourPillar: Pillar | null = null
-  if (hourValue !== null) {
-    const hourBranch = hourValue / 2
+  if (normalizedHour) {
+    const hourBranch = normalizedHour.hourBranch
     const hourP = getHourPillar(dayStem, hourBranch)
     hourPillar = makePillar(hourP.stem, hourP.branch, false)
   }
@@ -422,7 +467,7 @@ export function calculateDaeun(
   const termDates: { jdn: number }[] = []
   for (let y = birthYear - 1; y <= birthYear + 1; y++) {
     for (const t of SOLAR_TERM_BOUNDARIES) {
-      termDates.push({ jdn: getJulianDayNumber(y, t.month, t.day) })
+      termDates.push({ jdn: getJulianDayNumber(y, t.month, getSolarTermBoundaryDay(y, t)) })
     }
   }
   termDates.sort((a, b) => a.jdn - b.jdn)
