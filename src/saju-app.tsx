@@ -26,6 +26,9 @@ import {
   type SajuResult,
   type Pillar,
   type CompatibilityResult,
+  type SingangResult,
+  type JohuResult,
+  type YongshinResult,
 } from './saju-calc'
 import { DAY_PILLAR_PROFILES } from './day-pillar-profiles'
 import {
@@ -43,7 +46,14 @@ import {
   fetchProfiles,
   addProfile,
   deleteProfile,
+  signUp,
+  signIn,
+  signOut,
+  getUser,
+  onAuthChange,
+  isMaster,
   type SavedProfile,
+  type AuthUser,
 } from './profile-store'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -177,7 +187,7 @@ function GuideModal({ guide, onClose }: { guide: GuideCategory; onClose: () => v
       <div className="guide-modal">
         <div className="guide-modal-header">
           <h2 className="guide-modal-title">{guide.title}</h2>
-          <button className="guide-modal-close" onClick={onClose}>&times;</button>
+          <button className="guide-modal-close" onClick={onClose} aria-label="닫기">&times;</button>
         </div>
         <p className="guide-modal-desc">{guide.description}</p>
         <div className="guide-list">
@@ -226,6 +236,7 @@ function ProfileDropdown({ profiles, activeProfileId, onLoad, onDelete }: {
   onDelete: (id: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const dropdownRef = React.useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -278,21 +289,31 @@ function ProfileDropdown({ profiles, activeProfileId, onLoad, onDelete }: {
                 className={`dropdown-item ${p.id === activeProfileId ? 'dropdown-item--active' : ''}`}
                 onClick={() => { onLoad(p); setOpen(false) }}
               >
-                <div className="dropdown-item-body">
-                  <span className="dropdown-item-name">{name}</span>
-                  <span className="dropdown-item-meta">
-                    {birth} · {gender}
-                    {preview && <span className="dropdown-item-preview"> · {preview}</span>}
-                  </span>
-                </div>
-                <button
-                  className="dropdown-item-delete"
-                  onClick={(e) => { e.stopPropagation(); onDelete(p.id) }}
-                  title="삭제"
-                  aria-label="삭제"
-                >
-                  &times;
-                </button>
+                {confirmDeleteId === p.id ? (
+                  <div className="dropdown-confirm" onClick={e => e.stopPropagation()}>
+                    <span className="dropdown-confirm-text">삭제할까요?</span>
+                    <button className="dropdown-confirm-yes" onClick={() => { onDelete(p.id); setConfirmDeleteId(null) }}>삭제</button>
+                    <button className="dropdown-confirm-no" onClick={() => setConfirmDeleteId(null)}>취소</button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="dropdown-item-body">
+                      <span className="dropdown-item-name">{name}</span>
+                      <span className="dropdown-item-meta">
+                        {birth} · {gender}
+                        {preview && <span className="dropdown-item-preview"> · {preview}</span>}
+                      </span>
+                    </div>
+                    <button
+                      className="dropdown-item-delete"
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(p.id) }}
+                      title="삭제"
+                      aria-label="삭제"
+                    >
+                      &times;
+                    </button>
+                  </>
+                )}
               </div>
             )
           })}
@@ -547,9 +568,7 @@ function DayMasterSection({ result }: { result: SajuResult }) {
 
 // --- 조후 & 신강/신약 분석 ---
 
-function JohuSingangSection({ result }: { result: SajuResult }) {
-  const johu = analyzeJohu(result)
-  const singang = analyzeSingang(result)
+function JohuSingangSection({ singang, johu }: { singang: SingangResult; johu: JohuResult }) {
 
   // 신강 게이지 색상
   const gaugeColor = singang.score >= 58 ? '#ef4444'
@@ -649,11 +668,7 @@ function InteractionsSection({ result }: { result: SajuResult }) {
 
 // --- 용신 분석 ---
 
-function YongshinSection({ result }: { result: SajuResult }) {
-  const singang = analyzeSingang(result)
-  const johu = analyzeJohu(result)
-  const ys = determineYongshin(result, singang, johu)
-
+function YongshinSection({ yongshin: ys }: { yongshin: YongshinResult }) {
   const elBg = EL_BG[ys.yongshin]
   const elText = EL_TEXT[ys.yongshin]
   const elBorder = EL_BORDER[ys.yongshin]
@@ -729,10 +744,7 @@ function VoidSection({ result }: { result: SajuResult }) {
 
 // --- 사주 요약 카드 ---
 
-function SajuSummaryCard({ result, name, dark }: { result: SajuResult; name: string; dark: boolean }) {
-  const singang = analyzeSingang(result)
-  const johu = analyzeJohu(result)
-  const ys = determineYongshin(result, singang, johu)
+function SajuSummaryCard({ result, name, dark, singang, johu, yongshin: ys }: { result: SajuResult; name: string; dark: boolean; singang: SingangResult; johu: JohuResult; yongshin: YongshinResult }) {
   const interactions = analyzeInteractions(result)
   const sex = getSexagenary(result.dayPillar.stem, result.dayPillar.branch)
   const pillarProfile = DAY_PILLAR_PROFILES[sex]
@@ -839,16 +851,11 @@ function ElementChart({ result, dark }: { result: SajuResult; dark: boolean }) {
 
 // --- 대운 ---
 
-function DaeunSection({ result, form }: { result: SajuResult; form: FormState }) {
+function DaeunSection({ result, form, yongshin: ys }: { result: SajuResult; form: FormState; yongshin: YongshinResult }) {
   const birthYear = Number(form.year)
   const birthMonth = Number(form.month)
   const birthDay = Number(form.day)
   const currentAge = new Date().getFullYear() - birthYear
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
-
-  const singang = analyzeSingang(result)
-  const johu = analyzeJohu(result)
-  const ys = determineYongshin(result, singang, johu)
 
   const periods = calculateDaeun(
     result.monthPillar.stem,
@@ -862,6 +869,9 @@ function DaeunSection({ result, form }: { result: SajuResult; form: FormState })
   const periodAnalyses = periods.map(p =>
     analyzePeriodInteraction(p.stem, p.branch, result, ys.yongshin, ys.gishin)
   )
+
+  const activeIdx = periods.findIndex(p => currentAge >= p.startAge && currentAge <= p.endAge)
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(activeIdx >= 0 ? activeIdx : null)
 
   const ratingColors: Record<string, string> = {
     great: '#16a34a', good: '#3b82f6', neutral: 'var(--text-muted)', caution: '#d97706', warning: '#dc2626',
@@ -928,13 +938,9 @@ function DaeunSection({ result, form }: { result: SajuResult; form: FormState })
 
 // --- 세운 ---
 
-function SeunSection({ result }: { result: SajuResult }) {
+function SeunSection({ result, yongshin: ys }: { result: SajuResult; yongshin: YongshinResult }) {
   const currentYear = new Date().getFullYear()
   const seun = calculateSeun(currentYear, result.dayPillar.stem, result.yearPillar.branch)
-
-  const singang = analyzeSingang(result)
-  const johu = analyzeJohu(result)
-  const ys = determineYongshin(result, singang, johu)
   const seunAnalysis = analyzePeriodInteraction(seun.stem, seun.branch, result, ys.yongshin, ys.gishin)
 
   const ratingColors: Record<string, string> = {
@@ -982,14 +988,10 @@ function SeunSection({ result }: { result: SajuResult }) {
 
 // --- 월운 ---
 
-function MonthlyFortuneSection({ result }: { result: SajuResult }) {
+function MonthlyFortuneSection({ result, yongshin: ys }: { result: SajuResult; yongshin: YongshinResult }) {
   const currentYear = new Date().getFullYear()
   const currentMonth = new Date().getMonth() + 1
   const fortunes = calculateMonthlyFortunes(currentYear, result.dayPillar.stem)
-
-  const singang = analyzeSingang(result)
-  const johu = analyzeJohu(result)
-  const ys = determineYongshin(result, singang, johu)
 
   const monthAnalyses = fortunes.map(f =>
     analyzePeriodInteraction(f.stem, f.branch, result, ys.yongshin, ys.gishin)
@@ -1002,7 +1004,7 @@ function MonthlyFortuneSection({ result }: { result: SajuResult }) {
     great: '\u{1F7E2}', good: '\u{1F535}', neutral: '\u26AA', caution: '\u{1F7E1}', warning: '\u{1F534}',
   }
 
-  const [expandedMonth, setExpandedMonth] = useState<number | null>(null)
+  const [expandedMonth, setExpandedMonth] = useState<number | null>(currentMonth - 1)
 
   return (
     <div className="result-card">
@@ -1199,12 +1201,17 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
   const exportRef = useRef<HTMLDivElement>(null)
   const [exporting, setExporting] = useState(false)
 
+  // 공통 분석 결과를 1번만 계산
+  const cachedSingang = React.useMemo(() => analyzeSingang(result), [result])
+  const cachedJohu = React.useMemo(() => analyzeJohu(result), [result])
+  const cachedYongshin = React.useMemo(() => determineYongshin(result, cachedSingang, cachedJohu), [result, cachedSingang, cachedJohu])
+
   const dayStemEl = STEM_ELEMENT[result.dayPillar.stem]
   const dayPolarity = result.dayPillar.stem % 2 === 0 ? '양' : '음'
   const dayMasterDesc = `${ELEMENTS_HANJA[dayStemEl]}(${ELEMENTS_KO[dayStemEl]}) - ${dayPolarity}${ELEMENTS_KO[dayStemEl]}`
 
   const handleExport = async () => {
-    const target = exportRef.current || resultRef.current
+    const target = resultRef.current
     if (!target || exporting) return
     setExporting(true)
     try {
@@ -1219,6 +1226,7 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
       link.click()
     } catch (err) {
       console.error('이미지 저장 실패:', err)
+      alert('이미지 저장에 실패했습니다. 다시 시도해주세요.')
     }
     setExporting(false)
   }
@@ -1229,7 +1237,7 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
   return (
     <div className="result-section" ref={resultRef}>
       <div ref={exportRef}>
-        <SajuSummaryCard result={result} name={name} dark={dark} />
+        <SajuSummaryCard result={result} name={name} dark={dark} singang={cachedSingang} johu={cachedJohu} yongshin={cachedYongshin} />
 
         <div className="result-card">
           <div className="result-header">
@@ -1285,8 +1293,8 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
       {tab === 'basic' && (
         <>
           <DayMasterSection result={result} />
-          <JohuSingangSection result={result} />
-          <YongshinSection result={result} />
+          <JohuSingangSection singang={cachedSingang} johu={cachedJohu} />
+          <YongshinSection yongshin={cachedYongshin} />
           <InteractionsSection result={result} />
           <VoidSection result={result} />
 
@@ -1294,9 +1302,9 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
             <ElementChart result={result} dark={dark} />
           </div>
 
-          <DaeunSection result={result} form={form} />
-          <SeunSection result={result} />
-          <MonthlyFortuneSection result={result} />
+          <DaeunSection result={result} form={form} yongshin={cachedYongshin} />
+          <SeunSection result={result} yongshin={cachedYongshin} />
+          <MonthlyFortuneSection result={result} yongshin={cachedYongshin} />
         </>
       )}
 
@@ -1313,7 +1321,113 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
 
 // --- 메인 앱 ---
 
-type View = 'form' | 'result'
+type View = 'form' | 'loading' | 'result'
+
+// --- 로그인 폼 (홈화면 인라인) ---
+
+function LoginForm({ onAuth, onSignupClick }: { onAuth: (user: AuthUser) => void; onSignupClick: () => void }) {
+  const [id, setId] = useState('')
+  const [pw, setPw] = useState('')
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authLoading, setAuthLoading] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id.trim() || !pw.trim()) { setAuthError('아이디와 비밀번호를 입력하세요.'); return }
+
+    const email = id.includes('@') ? id.trim() : `${id.trim()}@saju.app`
+    setAuthLoading(true)
+    setAuthError(null)
+
+    const { user, error } = await signIn(email, pw)
+    if (error) { setAuthError('아이디 또는 비밀번호가 틀렸습니다.'); setAuthLoading(false); return }
+    onAuth(user)
+    setAuthLoading(false)
+  }
+
+  return (
+    <div className="auth-modal auth-modal--inline">
+      <form className="auth-form" onSubmit={handleSubmit}>
+        <div className="auth-field">
+          <label className="label" htmlFor="login-id">아이디</label>
+          <input id="login-id" type="text" placeholder="아이디 입력" value={id} onChange={e => setId(e.target.value)} autoComplete="username" />
+        </div>
+        <div className="auth-field">
+          <label className="label" htmlFor="login-pw">비밀번호</label>
+          <input id="login-pw" type="password" placeholder="비밀번호 입력" value={pw} onChange={e => setPw(e.target.value)} autoComplete="current-password" />
+        </div>
+        {authError && <p className="auth-error">{authError}</p>}
+        <button className="auth-submit" type="submit" disabled={authLoading}>
+          {authLoading ? '로그인 중...' : '로그인'}
+        </button>
+        <button type="button" className="auth-switch" onClick={onSignupClick}>
+          계정이 없으신가요? <strong>회원가입</strong>
+        </button>
+      </form>
+    </div>
+  )
+}
+
+// --- 회원가입 모달 ---
+
+function SignupModal({ onClose, signingUpRef }: { onClose: (success: boolean) => void; signingUpRef: React.MutableRefObject<boolean> }) {
+  const [id, setId] = useState('')
+  const [pw, setPw] = useState('')
+  const [pwConfirm, setPwConfirm] = useState('')
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authLoading, setAuthLoading] = useState(false)
+  const overlayRef = useRef<HTMLDivElement>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!id.trim() || !pw.trim()) { setAuthError('아이디와 비밀번호를 입력하세요.'); return }
+    if (pw.length < 6) { setAuthError('비밀번호는 6자 이상이어야 합니다.'); return }
+    if (pw !== pwConfirm) { setAuthError('비밀번호가 일치하지 않습니다.'); return }
+
+    const email = id.includes('@') ? id.trim() : `${id.trim()}@saju.app`
+    setAuthLoading(true)
+    setAuthError(null)
+
+    signingUpRef.current = true
+    const { error } = await signUp(email, pw)
+    if (error) { setAuthError(error); setAuthLoading(false); signingUpRef.current = false; return }
+
+    // 가입 후 바로 로그아웃 (자동 로그인 방지)
+    await signOut()
+    signingUpRef.current = false
+    setAuthLoading(false)
+    onClose(true)
+  }
+
+  return (
+    <div className="guide-overlay" ref={overlayRef} onClick={e => { if (e.target === overlayRef.current) onClose(false) }}>
+      <div className="auth-modal">
+        <div className="guide-modal-header">
+          <h2 className="guide-modal-title">회원가입</h2>
+          <button className="guide-modal-close" onClick={() => onClose(false)} aria-label="닫기">&times;</button>
+        </div>
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <div className="auth-field">
+            <label className="label" htmlFor="signup-id">아이디</label>
+            <input id="signup-id" type="text" placeholder="사용할 아이디" value={id} onChange={e => setId(e.target.value)} autoComplete="username" />
+          </div>
+          <div className="auth-field">
+            <label className="label" htmlFor="signup-pw">비밀번호</label>
+            <input id="signup-pw" type="password" placeholder="6자 이상" value={pw} onChange={e => setPw(e.target.value)} autoComplete="new-password" />
+          </div>
+          <div className="auth-field">
+            <label className="label" htmlFor="signup-pw2">비밀번호 확인</label>
+            <input id="signup-pw2" type="password" placeholder="비밀번호 다시 입력" value={pwConfirm} onChange={e => setPwConfirm(e.target.value)} autoComplete="new-password" />
+          </div>
+          {authError && <p className="auth-error">{authError}</p>}
+          <button className="auth-submit" type="submit" disabled={authLoading}>
+            {authLoading ? '가입 중...' : '가입하기'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 export const App: React.FC = () => {
   const { dark, toggle: toggleTheme } = useTheme()
@@ -1336,16 +1450,33 @@ export const App: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [guideOpen, setGuideOpen] = useState<GuideCategory | null>(null)
 
+  // Auth
+  const [user, setUser] = useState<AuthUser>(null)
+  const signingUp = useRef(false) // 회원가입 중 자동로그인 방지 플래그
+
   useEffect(() => {
-    fetchProfiles().then(data => {
-      setProfiles(data)
-      setLoading(false)
+    getUser().then(u => {
+      if (!signingUp.current) setUser(u)
     })
+    const sub = onAuthChange(u => {
+      if (!signingUp.current) setUser(u)
+    })
+    return () => sub.unsubscribe()
   }, [])
+
+  // 프로필: 유저 변경 시 다시 로드
+  useEffect(() => {
+    setLoading(true)
+    fetchProfiles()
+      .then(data => setProfiles(data))
+      .catch(() => setProfiles([]))
+      .finally(() => setLoading(false))
+  }, [user])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
     setForm(prev => ({ ...prev, [name]: value }))
+    if (error) setError(null)
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1373,9 +1504,15 @@ export const App: React.FC = () => {
 
     setError(null)
     setActiveProfileId(null)
+    setView('loading')
     const hourVal = form.hour === '' || form.hour === 'unknown' ? null : Number(form.hour)
-    setResult(calculateSaju(year, month, day, hourVal))
-    setView('result')
+    const sajuResult = calculateSaju(year, month, day, hourVal)
+
+    // 로딩 연출
+    setTimeout(() => {
+      setResult(sajuResult)
+      setView('result')
+    }, 1800)
   }
 
   const handleSave = useCallback(async () => {
@@ -1422,6 +1559,8 @@ export const App: React.FC = () => {
         setActiveProfileId(null)
         setView('form')
       }
+    } else {
+      alert('삭제에 실패했습니다. 다시 시도해주세요.')
     }
   }, [activeProfileId])
 
@@ -1450,6 +1589,56 @@ export const App: React.FC = () => {
   }`
   const genderText = form.gender === 'female' ? '여성' : '남성'
 
+  const [signupOpen, setSignupOpen] = useState(false)
+  const [signupSuccess, setSignupSuccess] = useState(false)
+
+  const handleLogout = async () => {
+    await signOut()
+    setUser(null)
+    setSignupSuccess(false)
+  }
+
+  // 비로그인 상태: 로그인 화면
+  if (!user) {
+    return (
+      <div className="app">
+        <header className="app-header">
+          <h1 className="app-title">사주팔자</h1>
+          <p className="app-subtitle">
+            생년월일시를 입력하여 사주원국을 확인하세요
+          </p>
+          <div className="header-actions">
+            <button className="theme-toggle" onClick={toggleTheme} title={dark ? '라이트 모드' : '다크 모드'} aria-label={dark ? '라이트 모드' : '다크 모드'}>
+              {dark ? '\u2600' : '\u263E'}
+            </button>
+          </div>
+        </header>
+
+        <div className="login-landing">
+          <div className="login-landing-icon">&#x2728;</div>
+          <h2 className="login-landing-title">로그인하고 내 사주를 확인하세요</h2>
+          {signupSuccess && (
+            <p className="auth-success">회원가입이 완료되었습니다! 로그인해주세요.</p>
+          )}
+          <LoginForm
+            onAuth={u => setUser(u)}
+            onSignupClick={() => { setSignupOpen(true); setSignupSuccess(false) }}
+          />
+        </div>
+
+        {signupOpen && (
+          <SignupModal
+            signingUpRef={signingUp}
+            onClose={(success) => {
+              setSignupOpen(false)
+              if (success) setSignupSuccess(true)
+            }}
+          />
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="app">
       <header className="app-header">
@@ -1457,9 +1646,15 @@ export const App: React.FC = () => {
         <p className="app-subtitle">
           생년월일시를 입력하여 사주원국을 확인하세요
         </p>
-        <button className="theme-toggle" onClick={toggleTheme} title={dark ? '라이트 모드' : '다크 모드'}>
-          {dark ? '\u2600' : '\u263E'}
-        </button>
+        <div className="header-actions">
+          {isMaster(user) && <span className="master-badge">MASTER</span>}
+          <button className="auth-btn" onClick={handleLogout}>
+            {(user.email?.split('@')[0] ?? '')} 로그아웃
+          </button>
+          <button className="theme-toggle" onClick={toggleTheme} title={dark ? '라이트 모드' : '다크 모드'} aria-label={dark ? '라이트 모드' : '다크 모드'}>
+            {dark ? '\u2600' : '\u263E'}
+          </button>
+        </div>
       </header>
 
       <div className="guide-buttons">
@@ -1476,29 +1671,31 @@ export const App: React.FC = () => {
       {guideOpen && <GuideModal guide={guideOpen} onClose={() => setGuideOpen(null)} />}
 
       <main className="main-content">
-        {/* 상단 바: 드롭다운 + 새 사주 버튼 */}
-        <div className="top-bar">
-          {loading ? (
-            <p className="loading-text">불러오는 중...</p>
-          ) : profiles.length > 0 ? (
-            <ProfileDropdown
-              profiles={profiles}
-              activeProfileId={activeProfileId}
-              onLoad={handleLoadProfile}
-              onDelete={handleDeleteProfile}
-            />
-          ) : null}
+        {/* 상단 바: 드롭다운 + 새 사주 버튼 (로딩 중에는 숨김) */}
+        {view !== 'loading' && (
+          <div className="top-bar">
+            {loading ? (
+              <p className="loading-text">불러오는 중...</p>
+            ) : profiles.length > 0 ? (
+              <ProfileDropdown
+                profiles={profiles}
+                activeProfileId={activeProfileId}
+                onLoad={handleLoadProfile}
+                onDelete={handleDeleteProfile}
+              />
+            ) : null}
 
-          {view === 'result' && (
-            <button
-              type="button"
-              className="new-saju-btn"
-              onClick={handleNewSaju}
-            >
-              + 새 사주 보기
-            </button>
-          )}
-        </div>
+            {view === 'result' && (
+              <button
+                type="button"
+                className="new-saju-btn"
+                onClick={handleNewSaju}
+              >
+                + 새 사주 보기
+              </button>
+            )}
+          </div>
+        )}
 
         {/* 입력 폼 (form 뷰일 때만) */}
         {view === 'form' && (
@@ -1621,6 +1818,15 @@ export const App: React.FC = () => {
               {error && <div className="error-msg">{error}</div>}
             </form>
           </section>
+        )}
+
+        {/* 로딩 애니메이션 */}
+        {view === 'loading' && (
+          <div className="loading-screen">
+            <div className="loading-spinner" />
+            <p className="loading-title">사주를 분석하고 있어요...</p>
+            <p className="loading-sub">천간·지지·오행의 기운을 읽는 중</p>
+          </div>
         )}
 
         {/* 결과 (result 뷰일 때만) */}
