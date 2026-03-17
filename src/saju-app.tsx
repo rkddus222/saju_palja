@@ -2,8 +2,15 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   calculateSaju,
   analyzeElements,
+  analyzeJohu,
+  analyzeSingang,
+  analyzeInteractions,
+  determineYongshin,
+  analyzeVoid,
+  analyzePeriodInteraction,
   calculateDaeun,
   calculateSeun,
+  calculateMonthlyFortunes,
   analyzeCompatibility,
   DAY_MASTER_PROFILES,
   ELEMENTS_KO,
@@ -20,6 +27,18 @@ import {
   type Pillar,
   type CompatibilityResult,
 } from './saju-calc'
+import { DAY_PILLAR_PROFILES } from './day-pillar-profiles'
+import {
+  CHEONGAN_GUIDE,
+  JIJI_GUIDE,
+  SIPSUNG_GUIDE,
+  TWELVE_STAGE_GUIDE,
+  TWELVE_SPIRIT_GUIDE,
+  JOHU_GUIDE,
+  SINGANG_GUIDE,
+  HYUNGCHUNG_GUIDE,
+  type GuideCategory,
+} from './guide-data'
 import {
   fetchProfiles,
   addProfile,
@@ -125,6 +144,78 @@ function useTheme() {
 function getElBg(el: number, dark: boolean) { return dark ? EL_BG_DARK[el] : EL_BG[el] }
 function getElText(el: number, dark: boolean) { return dark ? EL_TEXT_DARK[el] : EL_TEXT[el] }
 function getElBorder(el: number, dark: boolean) { return dark ? EL_BORDER_DARK[el] : EL_BORDER[el] }
+
+// --- 가이드 모달 ---
+
+function GuideModal({ guide, onClose }: { guide: GuideCategory; onClose: () => void }) {
+  const [expanded, setExpanded] = useState<number | null>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+    }
+  }, [onClose])
+
+  const handleToggle = (i: number) => {
+    const next = expanded === i ? null : i
+    setExpanded(next)
+    if (next !== null) {
+      setTimeout(() => {
+        itemRefs.current[next]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }, 50)
+    }
+  }
+
+  return (
+    <div className="guide-overlay" ref={overlayRef} onClick={e => { if (e.target === overlayRef.current) onClose() }}>
+      <div className="guide-modal">
+        <div className="guide-modal-header">
+          <h2 className="guide-modal-title">{guide.title}</h2>
+          <button className="guide-modal-close" onClick={onClose}>&times;</button>
+        </div>
+        <p className="guide-modal-desc">{guide.description}</p>
+        <div className="guide-list">
+          {guide.items.map((item, i) => (
+            <div
+              key={i}
+              ref={el => { itemRefs.current[i] = el }}
+              className={`guide-item ${expanded === i ? 'guide-item--open' : ''}`}
+            >
+              <button
+                className="guide-item-header"
+                onClick={() => handleToggle(i)}
+              >
+                <div className="guide-item-left">
+                  <span className="guide-item-name">
+                    {item.name}
+                    {item.hanja && <span className="guide-item-hanja"> {item.hanja}</span>}
+                  </span>
+                  {(item.yinYang || item.element) && (
+                    <span className="guide-item-tags">
+                      {item.yinYang && <span className={`guide-tag guide-tag--${item.yinYang === '양' ? 'yang' : 'yin'}`}>{item.yinYang}</span>}
+                      {item.element && <span className="guide-tag guide-tag--element">{item.element}</span>}
+                    </span>
+                  )}
+                </div>
+                <span className="guide-item-arrow">{expanded === i ? '\u25B2' : '\u25BC'}</span>
+              </button>
+              <div className="guide-item-summary">{item.summary}</div>
+              {expanded === i && (
+                <div className="guide-item-detail">{item.detail}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // --- 프로필 드롭다운 ---
 
@@ -368,34 +459,310 @@ function SajuTable({ result, dark }: { result: SajuResult; dark: boolean }) {
   )
 }
 
-// --- 일간 성격 해설 ---
+// --- 일주 성격 해설 (60갑자) ---
+
+function getSexagenary(stem: number, branch: number): number {
+  // stem(0~9)과 branch(0~11)로 60갑자 번호 복원
+  for (let i = 0; i < 60; i++) {
+    if (i % 10 === stem && i % 12 === branch) return i
+  }
+  return 0
+}
 
 function DayMasterSection({ result }: { result: SajuResult }) {
+  const sex = getSexagenary(result.dayPillar.stem, result.dayPillar.branch)
+  const pillarProfile = DAY_PILLAR_PROFILES[sex]
+  // 기존 일간 프로필 폴백
   const stemKo = result.dayPillar.stemKo
-  const profile = DAY_MASTER_PROFILES[stemKo]
-  if (!profile) return null
+  const fallback = DAY_MASTER_PROFILES[stemKo]
 
+  const profile = pillarProfile
+  if (!profile && !fallback) return null
+
+  if (profile) {
+    return (
+      <div className="result-card">
+        <h3 className="section-title">일주 성격 해설</h3>
+        <div className="day-master-profile">
+          <div className="day-master-title">{profile.title}</div>
+          <div className="profile-block">
+            <span className="profile-block-label">이미지</span>
+            <p className="profile-block-text">{profile.image}</p>
+          </div>
+          <div className="profile-block">
+            <span className="profile-block-label">성격</span>
+            <p className="profile-block-text">{profile.personality}</p>
+          </div>
+          <div className="profile-block">
+            <span className="profile-block-label">장점</span>
+            <p className="profile-block-text">{profile.strengths}</p>
+          </div>
+          <div className="profile-block">
+            <span className="profile-block-label">약점</span>
+            <p className="profile-block-text">{profile.weaknesses}</p>
+          </div>
+          <div className="profile-block">
+            <span className="profile-block-label">연애·관계</span>
+            <p className="profile-block-text">{profile.relationships}</p>
+          </div>
+          <div className="profile-block">
+            <span className="profile-block-label">적성·직업</span>
+            <p className="profile-block-text">{profile.career}</p>
+          </div>
+          <div className="profile-block">
+            <span className="profile-block-label">조언</span>
+            <p className="profile-block-text">{profile.advice}</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // 폴백: 기존 10간 기반
   return (
     <div className="result-card">
       <h3 className="section-title">일간 성격 해설</h3>
       <div className="day-master-profile">
-        <div className="day-master-title">{profile.title}</div>
+        <div className="day-master-title">{fallback!.title}</div>
         <div className="profile-block">
           <span className="profile-block-label">성격</span>
-          <p className="profile-block-text">{profile.personality}</p>
+          <p className="profile-block-text">{fallback!.personality}</p>
         </div>
         <div className="profile-block">
           <span className="profile-block-label">장점</span>
-          <p className="profile-block-text">{profile.strengths}</p>
+          <p className="profile-block-text">{fallback!.strengths}</p>
         </div>
         <div className="profile-block">
           <span className="profile-block-label">약점</span>
-          <p className="profile-block-text">{profile.weaknesses}</p>
+          <p className="profile-block-text">{fallback!.weaknesses}</p>
         </div>
         <div className="profile-block">
           <span className="profile-block-label">조언</span>
-          <p className="profile-block-text">{profile.advice}</p>
+          <p className="profile-block-text">{fallback!.advice}</p>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// --- 조후 & 신강/신약 분석 ---
+
+function JohuSingangSection({ result }: { result: SajuResult }) {
+  const johu = analyzeJohu(result)
+  const singang = analyzeSingang(result)
+
+  // 신강 게이지 색상
+  const gaugeColor = singang.score >= 58 ? '#ef4444'
+                   : singang.score >= 42 ? '#eab308'
+                   : '#3b82f6'
+
+  // 조후 온도 아이콘
+  const tempIcon = johu.season === '여름' ? '\u2600\uFE0F'
+                 : johu.season === '겨울' ? '\u2744\uFE0F'
+                 : johu.season === '봄' ? '\uD83C\uDF38'
+                 : '\uD83C\uDF42'
+
+  return (
+    <div className="result-card">
+      <h3 className="section-title">조후 & 신강/신약 분석</h3>
+
+      <div className="analysis-block">
+        <div className="analysis-label">
+          <span className="analysis-icon">{tempIcon}</span>
+          조후 (온도·습도)
+        </div>
+        <div className="analysis-tags">
+          <span className="analysis-tag">{johu.season}</span>
+          <span className="analysis-tag">{johu.temperature}</span>
+          <span className="analysis-tag">{johu.humidity}</span>
+          <span className={`analysis-tag ${johu.hasNeeded ? 'analysis-tag--good' : 'analysis-tag--warn'}`}>
+            {johu.neededHanja}({johu.neededElement}) {johu.hasNeeded ? `${johu.neededCount}개 있음` : '없음'}
+          </span>
+        </div>
+        <p className="analysis-summary">{johu.summary}</p>
+        <p className="analysis-detail">{johu.detail}</p>
+      </div>
+
+      <div className="analysis-divider" />
+
+      <div className="analysis-block">
+        <div className="analysis-label">
+          <span className="analysis-icon">{'\u2699\uFE0F'}</span>
+          신강/신약 (엔진 크기)
+        </div>
+        <div className="singang-gauge-wrap">
+          <div className="singang-gauge-bar">
+            <div
+              className="singang-gauge-fill"
+              style={{ width: `${singang.score}%`, background: gaugeColor }}
+            />
+            <div className="singang-gauge-center" />
+          </div>
+          <div className="singang-gauge-labels">
+            <span>신약</span>
+            <span>중화</span>
+            <span>신강</span>
+          </div>
+        </div>
+        <div className="singang-result">
+          <span className="singang-badge" style={{ background: gaugeColor }}>{singang.label}</span>
+          <span className="singang-score">내 편 {singang.score}% : 상대 {100 - singang.score}%</span>
+        </div>
+        <p className="analysis-summary">{singang.summary}</p>
+        <p className="analysis-detail">{singang.detail}</p>
+      </div>
+    </div>
+  )
+}
+
+// --- 형충파해 분석 ---
+
+function InteractionsSection({ result }: { result: SajuResult }) {
+  const interactions = analyzeInteractions(result)
+  if (interactions.length === 0) return (
+    <div className="result-card">
+      <h3 className="section-title">형충파해 분석</h3>
+      <p className="analysis-detail" style={{ textAlign: 'center', padding: 16 }}>
+        사주 내 지지간 충돌이 없어요. 안정적인 구조예요!
+      </p>
+    </div>
+  )
+
+  return (
+    <div className="result-card">
+      <h3 className="section-title">형충파해 분석</h3>
+      <div className="interactions-list">
+        {interactions.map((it, i) => (
+          <div key={i} className={`interaction-item interaction-item--${it.severity}`}>
+            <div className="interaction-header">
+              <span className={`interaction-badge interaction-badge--${it.severity}`}>{it.typeName}</span>
+              <span className="interaction-name">{it.name}</span>
+              <span className="interaction-pillars">{it.pillars[0]} — {it.pillars[1]}</span>
+            </div>
+            <p className="interaction-desc">{it.desc}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// --- 용신 분석 ---
+
+function YongshinSection({ result }: { result: SajuResult }) {
+  const singang = analyzeSingang(result)
+  const johu = analyzeJohu(result)
+  const ys = determineYongshin(result, singang, johu)
+
+  const elBg = EL_BG[ys.yongshin]
+  const elText = EL_TEXT[ys.yongshin]
+  const elBorder = EL_BORDER[ys.yongshin]
+
+  return (
+    <div className="result-card">
+      <h3 className="section-title">용신 (유리한 오행)</h3>
+
+      <div className="yongshin-main" style={{ background: elBg, borderColor: elBorder, color: elText }}>
+        <div className="yongshin-element">{ELEMENTS_HANJA[ys.yongshin]}</div>
+        <div className="yongshin-name">{ys.yongshinName}</div>
+      </div>
+
+      <p className="analysis-summary">{ys.summary}</p>
+      <p className="analysis-detail">{ys.detail}</p>
+
+      <div className="yongshin-tips">
+        <div className="yongshin-tip">
+          <span className="yongshin-tip-label">유리한 색상</span>
+          <span className="yongshin-tip-value">{ys.colors}</span>
+        </div>
+        <div className="yongshin-tip">
+          <span className="yongshin-tip-label">유리한 방위</span>
+          <span className="yongshin-tip-value">{ys.direction}</span>
+        </div>
+        <div className="yongshin-tip">
+          <span className="yongshin-tip-label">유리한 계절</span>
+          <span className="yongshin-tip-value">{ys.season}</span>
+        </div>
+        <div className="yongshin-tip">
+          <span className="yongshin-tip-label">추천 업종</span>
+          <span className="yongshin-tip-value">{ys.careers.join(', ')}</span>
+        </div>
+        <div className="yongshin-tip">
+          <span className="yongshin-tip-label">피해야 할 오행</span>
+          <span className="yongshin-tip-value">{ys.gishinName}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// --- 공망 상세 해석 ---
+
+function VoidSection({ result }: { result: SajuResult }) {
+  const va = analyzeVoid(result)
+
+  return (
+    <div className="result-card">
+      <h3 className="section-title">공망 (空亡) 분석</h3>
+      <div className="void-header">
+        <span className="void-label">공망 지지:</span>
+        <span className="void-chars">{va.voidHanja[0]}({va.voidBranches[0]}) · {va.voidHanja[1]}({va.voidBranches[1]})</span>
+      </div>
+      {va.affectedPillars.length > 0 ? (
+        <div className="void-affected">
+          {va.affectedPillars.map((ap, i) => (
+            <div key={i} className="void-item">
+              <span className="void-item-badge">{ap.pillar} 공망</span>
+              <p className="void-item-desc">{ap.desc}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="analysis-detail" style={{ textAlign: 'center', padding: 12 }}>
+          원국에 공망이 걸린 기둥이 없어요!
+        </p>
+      )}
+      <p className="analysis-summary" style={{ marginTop: 8 }}>{va.summary}</p>
+    </div>
+  )
+}
+
+// --- 사주 요약 카드 ---
+
+function SajuSummaryCard({ result, name, dark }: { result: SajuResult; name: string; dark: boolean }) {
+  const singang = analyzeSingang(result)
+  const johu = analyzeJohu(result)
+  const ys = determineYongshin(result, singang, johu)
+  const interactions = analyzeInteractions(result)
+  const sex = getSexagenary(result.dayPillar.stem, result.dayPillar.branch)
+  const pillarProfile = DAY_PILLAR_PROFILES[sex]
+
+  const dayStemEl = STEM_ELEMENT[result.dayPillar.stem]
+  const elBg = dark ? EL_BG_DARK[dayStemEl] : EL_BG[dayStemEl]
+  const elText = dark ? EL_TEXT_DARK[dayStemEl] : EL_TEXT[dayStemEl]
+  const elBorder = dark ? EL_BORDER_DARK[dayStemEl] : EL_BORDER[dayStemEl]
+
+  const chungCount = interactions.filter(i => i.type === '충').length
+  const hapCount = interactions.filter(i => i.type !== '충' && i.type !== '형').length
+
+  return (
+    <div className="summary-card" style={{ borderColor: elBorder, background: elBg }}>
+      <div className="summary-top">
+        <div className="summary-ilju" style={{ color: elText }}>
+          <span className="summary-ilju-chars">{result.dayPillar.stemChar}{result.dayPillar.branchChar}</span>
+          <span className="summary-ilju-ko">{result.dayPillar.stemKo}{result.dayPillar.branchKo}일주</span>
+        </div>
+        <div className="summary-name" style={{ color: elText }}>{name}</div>
+      </div>
+      {pillarProfile && (
+        <p className="summary-title" style={{ color: elText }}>{pillarProfile.title.split('—')[1]?.trim() || ''}</p>
+      )}
+      <div className="summary-tags">
+        <span className="summary-tag">{singang.label}</span>
+        <span className="summary-tag">{johu.season} · {johu.temperature}</span>
+        <span className="summary-tag">용신: {ELEMENTS_HANJA[ys.yongshin]}({ELEMENTS_KO[ys.yongshin]})</span>
+        {chungCount > 0 && <span className="summary-tag summary-tag--warn">충 {chungCount}개</span>}
+        {hapCount > 0 && <span className="summary-tag summary-tag--good">합 {hapCount}개</span>}
       </div>
     </div>
   )
@@ -477,6 +844,11 @@ function DaeunSection({ result, form }: { result: SajuResult; form: FormState })
   const birthMonth = Number(form.month)
   const birthDay = Number(form.day)
   const currentAge = new Date().getFullYear() - birthYear
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
+
+  const singang = analyzeSingang(result)
+  const johu = analyzeJohu(result)
+  const ys = determineYongshin(result, singang, johu)
 
   const periods = calculateDaeun(
     result.monthPillar.stem,
@@ -487,22 +859,69 @@ function DaeunSection({ result, form }: { result: SajuResult; form: FormState })
     result.dayPillar.stem,
   )
 
+  const periodAnalyses = periods.map(p =>
+    analyzePeriodInteraction(p.stem, p.branch, result, ys.yongshin, ys.gishin)
+  )
+
+  const ratingColors: Record<string, string> = {
+    great: '#16a34a', good: '#3b82f6', neutral: 'var(--text-muted)', caution: '#d97706', warning: '#dc2626',
+  }
+  const ratingLabels: Record<string, string> = {
+    great: '매우 좋음', good: '좋음', neutral: '보통', caution: '주의', warning: '경계',
+  }
+
   return (
     <div className="result-card">
       <h3 className="section-title">대운 (10년 주기)</h3>
       <div className="daeun-scroll">
         {periods.map((p, i) => {
           const isActive = currentAge >= p.startAge && currentAge <= p.endAge
+          const analysis = periodAnalyses[i]
           return (
-            <div key={i} className={`daeun-card ${isActive ? 'daeun-card--active' : ''}`}>
+            <div
+              key={i}
+              className={`daeun-card ${isActive ? 'daeun-card--active' : ''}`}
+              style={{ borderTopColor: ratingColors[analysis.rating], borderTopWidth: 3, borderTopStyle: 'solid', cursor: 'pointer' }}
+              onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+            >
               <span className="daeun-age">{p.startAge}~{p.endAge}세</span>
               <span className="daeun-chars">{p.stemChar}{p.branchChar}</span>
               <span className="daeun-ko">{p.stemKo}{p.branchKo}</span>
               <span className="daeun-info">{p.tenGod} · {p.twelveStage}</span>
+              <span className="daeun-rating" style={{ color: ratingColors[analysis.rating] }}>
+                {ratingLabels[analysis.rating]}
+              </span>
             </div>
           )
         })}
       </div>
+      {expandedIdx !== null && (
+        <div className="daeun-detail">
+          <div className="daeun-detail-header">
+            <strong>{periods[expandedIdx].stemChar}{periods[expandedIdx].branchChar} 대운</strong>
+            <span>({periods[expandedIdx].startAge}~{periods[expandedIdx].endAge}세)</span>
+            <span className="daeun-detail-rating" style={{ color: ratingColors[periodAnalyses[expandedIdx].rating] }}>
+              {ratingLabels[periodAnalyses[expandedIdx].rating]}
+            </span>
+          </div>
+          {periodAnalyses[expandedIdx].interactions.length > 0 && (
+            <div className="daeun-interactions">
+              {periodAnalyses[expandedIdx].interactions.map((it, j) => (
+                <span key={j} className={`daeun-int-tag daeun-int-tag--${it.type === '충' ? 'chung' : it.type === '형' ? 'hyung' : 'hap'}`}>
+                  {it.type === '합' ? '\u{1F91D}' : it.type === '충' ? '\u{26A1}' : '\u{26A0}\uFE0F'} {it.name} ({it.pillar})
+                </span>
+              ))}
+            </div>
+          )}
+          {periodAnalyses[expandedIdx].bringsYongshin && (
+            <span className="daeun-ys-tag daeun-ys-tag--good">용신 {ELEMENTS_HANJA[ys.yongshin]} 유입</span>
+          )}
+          {periodAnalyses[expandedIdx].bringsGishin && (
+            <span className="daeun-ys-tag daeun-ys-tag--bad">기신 {ELEMENTS_HANJA[ys.gishin]} 유입</span>
+          )}
+          <p className="daeun-narrative">{periodAnalyses[expandedIdx].narrative}</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -512,6 +931,18 @@ function DaeunSection({ result, form }: { result: SajuResult; form: FormState })
 function SeunSection({ result }: { result: SajuResult }) {
   const currentYear = new Date().getFullYear()
   const seun = calculateSeun(currentYear, result.dayPillar.stem, result.yearPillar.branch)
+
+  const singang = analyzeSingang(result)
+  const johu = analyzeJohu(result)
+  const ys = determineYongshin(result, singang, johu)
+  const seunAnalysis = analyzePeriodInteraction(seun.stem, seun.branch, result, ys.yongshin, ys.gishin)
+
+  const ratingColors: Record<string, string> = {
+    great: '#16a34a', good: '#3b82f6', neutral: 'var(--text-muted)', caution: '#d97706', warning: '#dc2626',
+  }
+  const ratingLabels: Record<string, string> = {
+    great: '매우 좋음', good: '좋음', neutral: '보통', caution: '주의', warning: '경계',
+  }
 
   return (
     <div className="result-card">
@@ -526,10 +957,99 @@ function SeunSection({ result }: { result: SajuResult }) {
               <span className="seun-tag">{seun.tenGodBranch}</span>
               <span className="seun-tag">{seun.twelveStage}</span>
               <span className="seun-tag">{seun.twelveSpirit}</span>
+              <span className="seun-tag" style={{ color: ratingColors[seunAnalysis.rating], fontWeight: 700 }}>
+                {ratingLabels[seunAnalysis.rating]}
+              </span>
             </div>
           </div>
         </div>
         <p className="seun-summary">{seun.summary}</p>
+
+        {seunAnalysis.interactions.length > 0 && (
+          <div className="daeun-interactions" style={{ marginTop: 10 }}>
+            {seunAnalysis.interactions.map((it, j) => (
+              <span key={j} className={`daeun-int-tag daeun-int-tag--${it.type === '충' ? 'chung' : it.type === '형' ? 'hyung' : 'hap'}`}>
+                {it.type === '합' ? '\u{1F91D}' : it.type === '충' ? '\u{26A1}' : '\u{26A0}\uFE0F'} {it.name} ({it.pillar})
+              </span>
+            ))}
+          </div>
+        )}
+        <p className="daeun-narrative" style={{ marginTop: 8 }}>{seunAnalysis.narrative}</p>
+      </div>
+    </div>
+  )
+}
+
+// --- 월운 ---
+
+function MonthlyFortuneSection({ result }: { result: SajuResult }) {
+  const currentYear = new Date().getFullYear()
+  const currentMonth = new Date().getMonth() + 1
+  const fortunes = calculateMonthlyFortunes(currentYear, result.dayPillar.stem)
+
+  const singang = analyzeSingang(result)
+  const johu = analyzeJohu(result)
+  const ys = determineYongshin(result, singang, johu)
+
+  const monthAnalyses = fortunes.map(f =>
+    analyzePeriodInteraction(f.stem, f.branch, result, ys.yongshin, ys.gishin)
+  )
+
+  const ratingColors: Record<string, string> = {
+    great: '#16a34a', good: '#3b82f6', neutral: 'var(--text-muted)', caution: '#d97706', warning: '#dc2626',
+  }
+  const ratingDots: Record<string, string> = {
+    great: '\u{1F7E2}', good: '\u{1F535}', neutral: '\u26AA', caution: '\u{1F7E1}', warning: '\u{1F534}',
+  }
+
+  const [expandedMonth, setExpandedMonth] = useState<number | null>(null)
+
+  return (
+    <div className="result-card">
+      <h3 className="section-title">{currentYear}년 월운</h3>
+      <div className="monthly-grid">
+        {fortunes.map((f, i) => {
+          const analysis = monthAnalyses[i]
+          const isCurrent = f.month === currentMonth
+          const isExpanded = expandedMonth === i
+          return (
+            <div key={i}>
+              <div
+                className={`monthly-card ${isCurrent ? 'monthly-card--current' : ''} ${isExpanded ? 'monthly-card--expanded' : ''}`}
+                onClick={() => setExpandedMonth(isExpanded ? null : i)}
+                style={{ borderLeftColor: ratingColors[analysis.rating], borderLeftWidth: 3, borderLeftStyle: 'solid' }}
+              >
+                <div className="monthly-month">{f.month}월</div>
+                <div className="monthly-chars">{f.stemChar}{f.branchChar}</div>
+                <div className="monthly-info">{f.tenGod} · {f.twelveStage}</div>
+                <div className="monthly-rating">{ratingDots[analysis.rating]}</div>
+              </div>
+              {isExpanded && (
+                <div className="monthly-detail">
+                  <div className="monthly-detail-header">
+                    <strong>{f.month}월</strong> {f.stemKo}{f.branchKo} ({f.elementHanja}{f.elementName})
+                  </div>
+                  {analysis.interactions.length > 0 && (
+                    <div className="daeun-interactions">
+                      {analysis.interactions.map((it, j) => (
+                        <span key={j} className={`daeun-int-tag daeun-int-tag--${it.type === '충' ? 'chung' : it.type === '형' ? 'hyung' : 'hap'}`}>
+                          {it.type === '합' ? '\u{1F91D}' : it.type === '충' ? '\u{26A1}' : '\u{26A0}\uFE0F'} {it.name} ({it.pillar})
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {analysis.bringsYongshin && (
+                    <span className="daeun-ys-tag daeun-ys-tag--good">용신 {ELEMENTS_HANJA[ys.yongshin]} 유입</span>
+                  )}
+                  {analysis.bringsGishin && (
+                    <span className="daeun-ys-tag daeun-ys-tag--bad">기신 {ELEMENTS_HANJA[ys.gishin]} 유입</span>
+                  )}
+                  <p className="daeun-narrative">{analysis.narrative}</p>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -635,6 +1155,23 @@ function GunghapSection({ profiles, currentForm, currentResult }: {
                 </tbody>
               </table>
 
+              {compResult.haps.length > 0 && (
+                <div className="gunghap-haps">
+                  <h4 className="gunghap-haps-title">합(合) 분석</h4>
+                  {compResult.haps.map((hap, i) => (
+                    <div key={i} className={`gunghap-hap-item gunghap-hap-item--${hap.rating}`}>
+                      <div className="gunghap-hap-header">
+                        <span className={`gunghap-hap-badge gunghap-hap-badge--${hap.rating}`}>
+                          {hap.type}
+                        </span>
+                        <span className="gunghap-hap-name">{hap.name}</span>
+                      </div>
+                      <p className="gunghap-hap-desc">{hap.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <p className="gunghap-summary">{compResult.summary}</p>
             </div>
           )}
@@ -659,6 +1196,7 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
   dark: boolean
 }) {
   const resultRef = useRef<HTMLDivElement>(null)
+  const exportRef = useRef<HTMLDivElement>(null)
   const [exporting, setExporting] = useState(false)
 
   const dayStemEl = STEM_ELEMENT[result.dayPillar.stem]
@@ -666,10 +1204,11 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
   const dayMasterDesc = `${ELEMENTS_HANJA[dayStemEl]}(${ELEMENTS_KO[dayStemEl]}) - ${dayPolarity}${ELEMENTS_KO[dayStemEl]}`
 
   const handleExport = async () => {
-    if (!resultRef.current || exporting) return
+    const target = exportRef.current || resultRef.current
+    if (!target || exporting) return
     setExporting(true)
     try {
-      const canvas = await html2canvas(resultRef.current, {
+      const canvas = await html2canvas(target, {
         backgroundColor: dark ? '#1a1a1a' : '#faf9f7',
         scale: 2,
         useCORS: true,
@@ -689,44 +1228,48 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
 
   return (
     <div className="result-section" ref={resultRef}>
-      <div className="result-card">
-        <div className="result-header">
-          <h2 className="section-title" style={{ margin: 0 }}>사주원국</h2>
-          <div className="result-header-actions">
-            <button
-              className="export-btn"
-              onClick={handleExport}
-              disabled={exporting}
-            >
-              {exporting ? '저장 중...' : '이미지 저장'}
-            </button>
-            <button
-              className={`save-btn ${alreadySaved ? 'save-btn--saved' : ''}`}
-              onClick={onSave}
-              disabled={alreadySaved || isSaving}
-            >
-              {isSaving ? '저장 중...' : alreadySaved ? '저장됨' : '저장하기'}
-            </button>
+      <div ref={exportRef}>
+        <SajuSummaryCard result={result} name={name} dark={dark} />
+
+        <div className="result-card">
+          <div className="result-header">
+            <h2 className="section-title" style={{ margin: 0 }}>사주원국</h2>
+            <div className="result-header-actions">
+              <button
+                className="export-btn"
+                onClick={handleExport}
+                disabled={exporting}
+              >
+                {exporting ? '저장 중...' : '이미지 저장'}
+              </button>
+              <button
+                className={`save-btn ${alreadySaved ? 'save-btn--saved' : ''}`}
+                onClick={onSave}
+                disabled={alreadySaved || isSaving}
+              >
+                {isSaving ? '저장 중...' : alreadySaved ? '저장됨' : '저장하기'}
+              </button>
+            </div>
           </div>
+
+          <div className="result-info">
+            <span>{name}</span>
+            <span className="info-sep">|</span>
+            <span>{birthText}</span>
+            <span className="info-sep">|</span>
+            <span>{genderText}</span>
+          </div>
+
+          <div className="day-master-badge">
+            일간(日干): <strong>{result.dayPillar.stemChar} {result.dayPillar.stemKo}</strong> — {dayMasterDesc}
+          </div>
+
+          <SajuTable result={result} dark={dark} />
+
+          <p className="disclaimer">
+            절기 경계는 근사치(양력 기준)를 사용합니다. 정밀한 사주 분석은 전문가 상담을 권장합니다.
+          </p>
         </div>
-
-        <div className="result-info">
-          <span>{name}</span>
-          <span className="info-sep">|</span>
-          <span>{birthText}</span>
-          <span className="info-sep">|</span>
-          <span>{genderText}</span>
-        </div>
-
-        <div className="day-master-badge">
-          일간(日干): <strong>{result.dayPillar.stemChar} {result.dayPillar.stemKo}</strong> — {dayMasterDesc}
-        </div>
-
-        <SajuTable result={result} dark={dark} />
-
-        <p className="disclaimer">
-          절기 경계는 근사치(양력 기준)를 사용합니다. 정밀한 사주 분석은 전문가 상담을 권장합니다.
-        </p>
       </div>
 
       {/* 탭 바 */}
@@ -742,6 +1285,10 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
       {tab === 'basic' && (
         <>
           <DayMasterSection result={result} />
+          <JohuSingangSection result={result} />
+          <YongshinSection result={result} />
+          <InteractionsSection result={result} />
+          <VoidSection result={result} />
 
           <div className="result-card">
             <ElementChart result={result} dark={dark} />
@@ -749,6 +1296,7 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
 
           <DaeunSection result={result} form={form} />
           <SeunSection result={result} />
+          <MonthlyFortuneSection result={result} />
         </>
       )}
 
@@ -786,6 +1334,7 @@ export const App: React.FC = () => {
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [guideOpen, setGuideOpen] = useState<GuideCategory | null>(null)
 
   useEffect(() => {
     fetchProfiles().then(data => {
@@ -912,6 +1461,19 @@ export const App: React.FC = () => {
           {dark ? '\u2600' : '\u263E'}
         </button>
       </header>
+
+      <div className="guide-buttons">
+        <button className="guide-btn" onClick={() => setGuideOpen(CHEONGAN_GUIDE)}>천간</button>
+        <button className="guide-btn" onClick={() => setGuideOpen(JIJI_GUIDE)}>지지</button>
+        <button className="guide-btn" onClick={() => setGuideOpen(SIPSUNG_GUIDE)}>십성</button>
+        <button className="guide-btn" onClick={() => setGuideOpen(TWELVE_STAGE_GUIDE)}>12운성</button>
+        <button className="guide-btn" onClick={() => setGuideOpen(TWELVE_SPIRIT_GUIDE)}>12신살</button>
+        <button className="guide-btn" onClick={() => setGuideOpen(JOHU_GUIDE)}>조후</button>
+        <button className="guide-btn" onClick={() => setGuideOpen(SINGANG_GUIDE)}>신강/신약</button>
+        <button className="guide-btn" onClick={() => setGuideOpen(HYUNGCHUNG_GUIDE)}>형충파해</button>
+      </div>
+
+      {guideOpen && <GuideModal guide={guideOpen} onClose={() => setGuideOpen(null)} />}
 
       <main className="main-content">
         {/* 상단 바: 드롭다운 + 새 사주 버튼 */}
