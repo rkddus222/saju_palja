@@ -45,6 +45,7 @@ import {
 import {
   fetchProfiles,
   addProfile,
+  updateProfile,
   deleteProfile,
   signUp,
   signIn,
@@ -70,6 +71,7 @@ interface FormState {
   day: string
   hour: string
   gender: Gender
+  mbti: string
 }
 
 const HOUR_OPTIONS = [
@@ -124,6 +126,25 @@ function formatBirthText(form: FormState): string {
   const hourLabel = getHourLabel(form.hour)
   const hourPart = hourLabel ? ` ${hourLabel}` : ''
   return `${form.year}.${form.month}.${form.day}${hourPart}`
+}
+
+function normalizeMbtiInput(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4)
+}
+
+function isSameProfileBase(a: FormState | SavedProfile['form'], b: FormState | SavedProfile['form']): boolean {
+  return (
+    a.name === b.name &&
+    a.year === b.year &&
+    a.month === b.month &&
+    a.day === b.day &&
+    a.hour === b.hour &&
+    a.gender === b.gender
+  )
+}
+
+function isSameProfileExact(a: FormState | SavedProfile['form'], b: FormState | SavedProfile['form']): boolean {
+  return isSameProfileBase(a, b) && normalizeMbtiInput(a.mbti) === normalizeMbtiInput(b.mbti)
 }
 
 // 오행별 색상 (木, 火, 土, 金, 水)
@@ -273,6 +294,7 @@ function ProfileDropdown({ profiles, activeProfileId, onLoad, onDelete }: {
             const name = p.form.name.trim() || '의뢰인'
             const birth = formatBirthText(p.form)
             const gender = p.form.gender === 'female' ? '여' : '남'
+            const mbti = normalizeMbtiInput(p.form.mbti)
             const year = Number(p.form.year)
             const month = Number(p.form.month)
             const day = Number(p.form.day)
@@ -301,6 +323,7 @@ function ProfileDropdown({ profiles, activeProfileId, onLoad, onDelete }: {
                       <span className="dropdown-item-name">{name}</span>
                       <span className="dropdown-item-meta">
                         {birth} · {gender}
+                        {mbti && <span className="dropdown-item-preview"> · {mbti}</span>}
                         {preview && <span className="dropdown-item-preview"> · {preview}</span>}
                       </span>
                     </div>
@@ -1185,7 +1208,7 @@ function GunghapSection({ profiles, currentForm, currentResult }: {
 
 // --- 결과 섹션 ---
 
-function ResultSection({ result, name, birthText, genderText, form, profiles, onSave, alreadySaved, isSaving, dark }: {
+function ResultSection({ result, name, birthText, genderText, form, profiles, onSave, onMbtiChange, saveLabel, alreadySaved, isSaving, dark }: {
   result: SajuResult
   name: string
   birthText: string
@@ -1193,6 +1216,8 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
   form: FormState
   profiles: SavedProfile[]
   onSave: () => void
+  onMbtiChange: (value: string) => void
+  saveLabel: string
   alreadySaved: boolean
   isSaving: boolean
   dark: boolean
@@ -1255,7 +1280,7 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
                 onClick={onSave}
                 disabled={alreadySaved || isSaving}
               >
-                {isSaving ? '저장 중...' : alreadySaved ? '저장됨' : '저장하기'}
+                {saveLabel}
               </button>
             </div>
           </div>
@@ -1266,6 +1291,27 @@ function ResultSection({ result, name, birthText, genderText, form, profiles, on
             <span>{birthText}</span>
             <span className="info-sep">|</span>
             <span>{genderText}</span>
+            {form.mbti && (
+              <>
+                <span className="info-sep">|</span>
+                <span>MBTI {form.mbti}</span>
+              </>
+            )}
+          </div>
+
+          <div className="result-mbti-row">
+            <label className="label result-mbti-label" htmlFor="result-mbti">MBTI</label>
+            <input
+              id="result-mbti"
+              className="result-mbti-input"
+              type="text"
+              inputMode="text"
+              placeholder="예: INFP"
+              maxLength={4}
+              value={form.mbti}
+              onChange={e => onMbtiChange(e.target.value)}
+            />
+            <span className="result-mbti-help">영문 4자리까지 저장됩니다.</span>
           </div>
 
           <div className="day-master-badge">
@@ -1440,6 +1486,7 @@ export const App: React.FC = () => {
     day: '',
     hour: '',
     gender: 'male',
+    mbti: '',
   })
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<SajuResult | null>(null)
@@ -1474,7 +1521,8 @@ export const App: React.FC = () => {
   }, [user])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target
+    const { name } = e.target
+    const value = name === 'mbti' ? normalizeMbtiInput(e.target.value) : e.target.value
     setForm(prev => ({ ...prev, [name]: value }))
     if (error) setError(null)
   }
@@ -1516,25 +1564,33 @@ export const App: React.FC = () => {
   }
 
   const handleSave = useCallback(async () => {
-    const exists = profiles.some(p =>
-      p.form.name === form.name &&
-      p.form.year === form.year &&
-      p.form.month === form.month &&
-      p.form.day === form.day &&
-      p.form.hour === form.hour &&
-      p.form.gender === form.gender
-    )
-    if (exists || saving) return
+    const activeProfile = activeProfileId ? profiles.find(p => p.id === activeProfileId) : null
+    const matchingProfile = activeProfile && isSameProfileBase(activeProfile.form, form)
+      ? activeProfile
+      : profiles.find(p => isSameProfileBase(p.form, form))
+    const exactMatch = matchingProfile ? isSameProfileExact(matchingProfile.form, form) : false
+
+    if (exactMatch || saving) return
 
     setSaving(true)
-    const saved = await addProfile(form)
+    const payload = { ...form, mbti: normalizeMbtiInput(form.mbti) }
+    const saved = matchingProfile
+      ? await updateProfile(matchingProfile.id, payload)
+      : await addProfile(payload)
     setSaving(false)
 
     if (saved) {
-      setProfiles(prev => [saved, ...prev])
+      setForm(saved.form)
+      setProfiles(prev => {
+        const index = prev.findIndex(p => p.id === saved.id)
+        if (index === -1) return [saved, ...prev]
+        const next = [...prev]
+        next[index] = saved
+        return next
+      })
       setActiveProfileId(saved.id)
     }
-  }, [form, profiles, saving])
+  }, [activeProfileId, form, profiles, saving])
 
   const handleLoadProfile = useCallback((profile: SavedProfile) => {
     setForm({ ...profile.form })
@@ -1565,21 +1621,23 @@ export const App: React.FC = () => {
   }, [activeProfileId])
 
   const handleNewSaju = useCallback(() => {
-    setForm({ name: '', year: '', month: '', day: '', hour: '', gender: 'male' })
+    setForm({ name: '', year: '', month: '', day: '', hour: '', gender: 'male', mbti: '' })
     setResult(null)
     setActiveProfileId(null)
     setError(null)
     setView('form')
   }, [])
 
-  const alreadySaved = profiles.some(p =>
-    p.form.name === form.name &&
-    p.form.year === form.year &&
-    p.form.month === form.month &&
-    p.form.day === form.day &&
-    p.form.hour === form.hour &&
-    p.form.gender === form.gender
-  )
+  const matchingProfile = (activeProfileId ? profiles.find(p => p.id === activeProfileId && isSameProfileBase(p.form, form)) : null)
+    ?? profiles.find(p => isSameProfileBase(p.form, form))
+  const alreadySaved = matchingProfile ? isSameProfileExact(matchingProfile.form, form) : false
+  const saveLabel = saving
+    ? '저장 중...'
+    : alreadySaved
+      ? '저장됨'
+      : matchingProfile
+        ? 'MBTI 저장'
+        : '저장하기'
 
   const displayName = form.name.trim() || '의뢰인'
   const birthText = `${form.year}년 ${form.month}월 ${form.day}일${
@@ -1839,6 +1897,8 @@ export const App: React.FC = () => {
             form={form}
             profiles={profiles}
             onSave={handleSave}
+            onMbtiChange={value => setForm(prev => ({ ...prev, mbti: normalizeMbtiInput(value) }))}
+            saveLabel={saveLabel}
             alreadySaved={alreadySaved}
             isSaving={saving}
             dark={dark}

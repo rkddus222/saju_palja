@@ -51,6 +51,7 @@ export interface ProfileRow {
   day: number
   hour: string | null   // "0"~"22", "unknown", 또는 null
   gender: 'male' | 'female'
+  mbti?: string | null
   created_at: string
 }
 
@@ -65,13 +66,45 @@ export interface SavedProfile {
     day: string
     hour: string
     gender: 'male' | 'female'
+    mbti: string
   }
   savedAt: number
 }
 
 // --- 변환 헬퍼 ---
 
-function rowToProfile(row: ProfileRow): SavedProfile {
+const MBTI_STORAGE_KEY = 'saju-profile-mbti-map'
+
+function normalizeMbti(mbti: string | null | undefined): string {
+  return (mbti ?? '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4)
+}
+
+function readMbtiMap(): Record<string, string> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(MBTI_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, string>
+    return typeof parsed === 'object' && parsed ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeMbtiMap(map: Record<string, string>) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(MBTI_STORAGE_KEY, JSON.stringify(map))
+}
+
+function persistMbti(profileId: string, mbti: string) {
+  const map = readMbtiMap()
+  if (mbti) map[profileId] = mbti
+  else delete map[profileId]
+  writeMbtiMap(map)
+}
+
+function rowToProfile(row: ProfileRow, localMbtiMap: Record<string, string>): SavedProfile {
+  const mbti = normalizeMbti(row.mbti) || localMbtiMap[row.id] || ''
   return {
     id: row.id,
     form: {
@@ -81,6 +114,7 @@ function rowToProfile(row: ProfileRow): SavedProfile {
       day: String(row.day),
       hour: row.hour ?? '',
       gender: row.gender,
+      mbti,
     },
     savedAt: new Date(row.created_at).getTime(),
   }
@@ -91,6 +125,7 @@ function rowToProfile(row: ProfileRow): SavedProfile {
 /** 전체 프로필 조회 (마스터: 전체, 일반: 내 것만) */
 export async function fetchProfiles(): Promise<SavedProfile[]> {
   const user = await getUser()
+  const localMbtiMap = readMbtiMap()
   let query = supabase
     .from('saju_profiles')
     .select('*')
@@ -108,12 +143,13 @@ export async function fetchProfiles(): Promise<SavedProfile[]> {
     return []
   }
 
-  return (data as ProfileRow[]).map(rowToProfile)
+  return (data as ProfileRow[]).map(row => rowToProfile(row, localMbtiMap))
 }
 
 /** 프로필 저장 */
 export async function addProfile(form: SavedProfile['form']): Promise<SavedProfile | null> {
   const user = await getUser()
+  const normalizedMbti = normalizeMbti(form.mbti)
   const row: Record<string, unknown> = {
     name: form.name,
     year: Number(form.year),
@@ -122,20 +158,85 @@ export async function addProfile(form: SavedProfile['form']): Promise<SavedProfi
     hour: form.hour === '' ? null : form.hour,
     gender: form.gender,
   }
+  if (normalizedMbti) row.mbti = normalizedMbti
   if (user) row.user_id = user.id
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('saju_profiles')
     .insert(row)
     .select()
     .single()
+
+  // 기존 테이블에 mbti 컬럼이 없더라도 앱에서는 MBTI를 유지한다.
+  if (error && normalizedMbti && error.message.toLowerCase().includes('mbti')) {
+    delete row.mbti
+    ;({ data, error } = await supabase
+      .from('saju_profiles')
+      .insert(row)
+      .select()
+      .single())
+  }
 
   if (error) {
     console.error('[addProfile]', error.message)
     return null
   }
 
-  return rowToProfile(data as ProfileRow)
+  const saved = rowToProfile(data as ProfileRow, readMbtiMap())
+  persistMbti(saved.id, normalizedMbti)
+  return {
+    ...saved,
+    form: {
+      ...saved.form,
+      mbti: normalizedMbti,
+    },
+  }
+}
+
+/** 프로필 수정 */
+export async function updateProfile(id: string, form: SavedProfile['form']): Promise<SavedProfile | null> {
+  const normalizedMbti = normalizeMbti(form.mbti)
+  const row: Record<string, unknown> = {
+    name: form.name,
+    year: Number(form.year),
+    month: Number(form.month),
+    day: Number(form.day),
+    hour: form.hour === '' ? null : form.hour,
+    gender: form.gender,
+    mbti: normalizedMbti || null,
+  }
+
+  let { data, error } = await supabase
+    .from('saju_profiles')
+    .update(row)
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error && error.message.toLowerCase().includes('mbti')) {
+    delete row.mbti
+    ;({ data, error } = await supabase
+      .from('saju_profiles')
+      .update(row)
+      .eq('id', id)
+      .select()
+      .single())
+  }
+
+  if (error) {
+    console.error('[updateProfile]', error.message)
+    return null
+  }
+
+  persistMbti(id, normalizedMbti)
+  const saved = rowToProfile(data as ProfileRow, readMbtiMap())
+  return {
+    ...saved,
+    form: {
+      ...saved.form,
+      mbti: normalizedMbti,
+    },
+  }
 }
 
 /** 프로필 삭제 */
@@ -150,5 +251,6 @@ export async function deleteProfile(id: string): Promise<boolean> {
     return false
   }
 
+  persistMbti(id, '')
   return true
 }
