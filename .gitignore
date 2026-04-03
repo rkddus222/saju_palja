@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 .env
+.env.local
+gemini_service_account.json
 
 # Editor directories and files
 .vscode/*

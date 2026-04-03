@@ -5,6 +5,23 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5174,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('react') || id.includes('scheduler')) return 'react-vendor'
+          if (id.includes('@supabase')) return 'supabase-vendor'
+          if (id.includes('recharts')) return 'chart-vendor'
+        },
+      },
+    },
   },
 })
-

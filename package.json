@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "node api/vertex-server.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start:api": "node api/vertex-server.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.99.1",
@@ -15,6 +17,7 @@
     "@tanstack/react-query": "^5.90.20",
     "autoprefixer": "^10.4.24",
     "axios": "^1.13.5",
+    "google-auth-library": "^10.6.2",
     "html2canvas": "^1.4.1",
     "lucide-react": "^0.563.0",
     "postcss": "^8.5.6",

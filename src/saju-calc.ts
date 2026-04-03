@@ -1350,7 +1350,7 @@ function findAllHaps(a: SajuResult, b: SajuResult): HapInfo[] {
   const bStemsAll = [b.yearPillar.stem, b.monthPillar.stem]
   if (b.hourPillar) bStemsAll.push(b.hourPillar.stem)
 
-  for (const [s1, s2, name, _desc] of CHEONGAN_HAP) {
+  for (const [s1, s2, name] of CHEONGAN_HAP) {
     // 이미 일간끼리 합이 잡혔으면 스킵
     if ((a.dayPillar.stem === s1 && b.dayPillar.stem === s2) ||
         (a.dayPillar.stem === s2 && b.dayPillar.stem === s1)) continue

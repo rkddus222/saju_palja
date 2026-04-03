@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { isSupabaseConfigured, supabase } from './supabase'
 import type { User } from '@supabase/supabase-js'
 
 // --- Auth ---
@@ -13,27 +13,38 @@ export function isMaster(user: AuthUser): boolean {
 }
 
 export async function signUp(email: string, password: string): Promise<{ user: AuthUser; error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { user: null, error: '서버 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.' }
+  }
   const { data, error } = await supabase.auth.signUp({ email, password })
   if (error) return { user: null, error: error.message }
   return { user: data.user, error: null }
 }
 
 export async function signIn(email: string, password: string): Promise<{ user: AuthUser; error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { user: null, error: '서버 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.' }
+  }
   const { data, error } = await supabase.auth.signInWithPassword({ email, password })
   if (error) return { user: null, error: error.message }
   return { user: data.user, error: null }
 }
 
 export async function signOut(): Promise<void> {
+  if (!isSupabaseConfigured) return
   await supabase.auth.signOut()
 }
 
 export async function getUser(): Promise<AuthUser> {
+  if (!isSupabaseConfigured) return null
   const { data } = await supabase.auth.getUser()
   return data.user
 }
 
 export function onAuthChange(callback: (user: AuthUser) => void) {
+  if (!isSupabaseConfigured) {
+    return { unsubscribe() {} }
+  }
   const { data } = supabase.auth.onAuthStateChange((_event, session) => {
     callback(session?.user ?? null)
   })
@@ -125,6 +136,7 @@ function rowToProfile(row: ProfileRow, localMbtiMap: Record<string, string>): Sa
 /** 전체 프로필 조회 (마스터: 전체, 일반: 내 것만) */
 export async function fetchProfiles(): Promise<SavedProfile[]> {
   const user = await getUser()
+  if (!user) return []
   const localMbtiMap = readMbtiMap()
   let query = supabase
     .from('saju_profiles')
@@ -149,6 +161,7 @@ export async function fetchProfiles(): Promise<SavedProfile[]> {
 /** 프로필 저장 */
 export async function addProfile(form: SavedProfile['form']): Promise<SavedProfile | null> {
   const user = await getUser()
+  if (!user) return null
   const normalizedMbti = normalizeMbti(form.mbti)
   const row: Record<string, unknown> = {
     name: form.name,
@@ -159,7 +172,7 @@ export async function addProfile(form: SavedProfile['form']): Promise<SavedProfi
     gender: form.gender,
   }
   if (normalizedMbti) row.mbti = normalizedMbti
-  if (user) row.user_id = user.id
+  row.user_id = user.id
 
   let { data, error } = await supabase
     .from('saju_profiles')
