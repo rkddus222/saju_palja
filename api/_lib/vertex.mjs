@@ -1,61 +1,59 @@
-import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { GoogleAuth } from 'google-auth-library'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-const ROOT_DIR = path.resolve(__dirname, '..')
-const DEFAULT_CREDENTIALS_PATH = path.join(ROOT_DIR, 'gemini_service_account.json')
-const PORT = Number(process.env.PORT ?? 8787)
+const FALLBACK_KEY_PATH = path.resolve(process.cwd(), 'gemini_service_account.json')
 const DEFAULT_LOCATION = process.env.VERTEX_LOCATION ?? 'global'
 const DEFAULT_MODEL = process.env.VERTEX_MODEL ?? 'gemini-2.5-flash'
 
-function json(res, statusCode, body) {
-  res.writeHead(statusCode, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-  })
-  res.end(JSON.stringify(body))
-}
+let credsCache = null
+let authCache = null
 
-function toErrorMessage(error) {
-  if (error instanceof Error) return error.message
-  return String(error)
-}
-
-async function readJsonBody(req) {
-  const chunks = []
-  for await (const chunk of req) {
-    chunks.push(chunk)
+async function loadCredentials() {
+  if (credsCache) return credsCache
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+  if (raw && raw.trim()) {
+    const trimmed = raw.trim()
+    const text = trimmed.startsWith('{')
+      ? trimmed
+      : Buffer.from(trimmed, 'base64').toString('utf8')
+    credsCache = JSON.parse(text)
+    return credsCache
   }
-  const raw = Buffer.concat(chunks).toString('utf8').trim()
-  return raw ? JSON.parse(raw) : {}
+  const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ?? FALLBACK_KEY_PATH
+  const fileContent = await readFile(keyPath, 'utf8')
+  credsCache = JSON.parse(fileContent)
+  return credsCache
 }
 
 async function resolveProjectId() {
   if (process.env.VERTEX_PROJECT_ID) return process.env.VERTEX_PROJECT_ID
-  const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ?? DEFAULT_CREDENTIALS_PATH
-  const raw = await readFile(credentialsPath, 'utf8')
-  const parsed = JSON.parse(raw)
-  if (!parsed.project_id) {
-    throw new Error('서비스 계정 파일에서 project_id를 찾지 못했습니다.')
+  const creds = await loadCredentials()
+  if (!creds.project_id) {
+    throw new Error('서비스 계정 자격증명에서 project_id를 찾지 못했습니다.')
   }
-  return parsed.project_id
+  return creds.project_id
+}
+
+async function getAuth() {
+  if (authCache) return authCache
+  const creds = await loadCredentials()
+  authCache = new GoogleAuth({
+    credentials: {
+      client_email: creds.client_email,
+      private_key: creds.private_key,
+    },
+    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+  })
+  return authCache
 }
 
 async function getAccessToken() {
-  const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ?? DEFAULT_CREDENTIALS_PATH
-  const auth = new GoogleAuth({
-    keyFile: credentialsPath,
-    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-  })
+  const auth = await getAuth()
   const client = await auth.getClient()
   const tokenResponse = await client.getAccessToken()
-  const token = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token
+  const token =
+    typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token
   if (!token) {
     throw new Error('Vertex AI access token을 발급하지 못했습니다.')
   }
@@ -67,12 +65,7 @@ function toContents(payload) {
     return payload.contents
   }
   if (typeof payload.prompt === 'string' && payload.prompt.trim()) {
-    return [
-      {
-        role: 'user',
-        parts: [{ text: payload.prompt.trim() }],
-      },
-    ]
+    return [{ role: 'user', parts: [{ text: payload.prompt.trim() }] }]
   }
   throw new Error('`prompt` 또는 `contents`를 전달해야 합니다.')
 }
@@ -86,9 +79,12 @@ function extractText(data) {
     .join('\n')
 }
 
-async function handleGenerate(req, res) {
+function toErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+export async function generateVertexContent(payload = {}) {
   try {
-    const payload = await readJsonBody(req)
     const projectId = await resolveProjectId()
     const location = payload.location ?? DEFAULT_LOCATION
     const model = payload.model ?? DEFAULT_MODEL
@@ -121,9 +117,7 @@ async function handleGenerate(req, res) {
     if (payload.thinkingBudget !== undefined) {
       vertexPayload.generationConfig = {
         ...(vertexPayload.generationConfig ?? {}),
-        thinkingConfig: {
-          thinkingBudget: payload.thinkingBudget,
-        },
+        thinkingConfig: { thinkingBudget: payload.thinkingBudget },
       }
     }
 
@@ -148,14 +142,17 @@ async function handleGenerate(req, res) {
           statusText: vertexResponse.statusText,
           body: rawResponse.slice(0, 500),
         })
-        return json(res, 502, {
-          error: 'Vertex AI가 JSON이 아닌 응답을 반환했습니다.',
-          details: {
-            status: vertexResponse.status,
-            statusText: vertexResponse.statusText,
-            bodyPreview: rawResponse.slice(0, 500),
+        return {
+          status: 502,
+          body: {
+            error: 'Vertex AI가 JSON이 아닌 응답을 반환했습니다.',
+            details: {
+              status: vertexResponse.status,
+              statusText: vertexResponse.statusText,
+              bodyPreview: rawResponse.slice(0, 500),
+            },
           },
-        })
+        }
       }
     }
 
@@ -165,53 +162,53 @@ async function handleGenerate(req, res) {
         statusText: vertexResponse.statusText,
         details: data,
       })
-      return json(res, vertexResponse.status, {
-        error: data?.error?.message ?? 'Vertex AI 요청에 실패했습니다.',
-        details: data,
-      })
+      return {
+        status: vertexResponse.status,
+        body: {
+          error: data?.error?.message ?? 'Vertex AI 요청에 실패했습니다.',
+          details: data,
+        },
+      }
     }
 
-    return json(res, 200, {
-      text: extractText(data),
-      model,
-      location,
-      finishReason: data?.candidates?.[0]?.finishReason ?? null,
-      raw: data,
-    })
+    return {
+      status: 200,
+      body: {
+        text: extractText(data),
+        model,
+        location,
+        finishReason: data?.candidates?.[0]?.finishReason ?? null,
+        raw: data,
+      },
+    }
   } catch (error) {
     console.error('[vertex-api] unhandled error', error)
-    return json(res, 500, {
-      error: toErrorMessage(error),
-    })
+    return {
+      status: 500,
+      body: { error: toErrorMessage(error) },
+    }
   }
 }
 
-const server = createServer(async (req, res) => {
-  if (!req.url || !req.method) {
-    return json(res, 400, { error: '잘못된 요청입니다.' })
+export async function vertexHealth() {
+  try {
+    const projectId = await resolveProjectId().catch(() => null)
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        projectId,
+        location: DEFAULT_LOCATION,
+        model: DEFAULT_MODEL,
+        credentialsSource: process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+          ? 'env:GOOGLE_SERVICE_ACCOUNT_JSON'
+          : (process.env.GOOGLE_APPLICATION_CREDENTIALS ?? FALLBACK_KEY_PATH),
+      },
+    }
+  } catch (error) {
+    return {
+      status: 500,
+      body: { ok: false, error: toErrorMessage(error) },
+    }
   }
-
-  if (req.method === 'OPTIONS') {
-    return json(res, 204, {})
-  }
-
-  if (req.method === 'GET' && req.url === '/api/vertex/health') {
-    return json(res, 200, {
-      ok: true,
-      projectId: await resolveProjectId().catch(() => null),
-      location: DEFAULT_LOCATION,
-      model: DEFAULT_MODEL,
-      credentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS ?? DEFAULT_CREDENTIALS_PATH,
-    })
-  }
-
-  if (req.method === 'POST' && req.url === '/api/vertex/generate') {
-    return handleGenerate(req, res)
-  }
-
-  return json(res, 404, { error: 'Not Found' })
-})
-
-server.listen(PORT, () => {
-  console.log(`[vertex-api] listening on http://127.0.0.1:${PORT}`)
-})
+}

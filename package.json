@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:api": "node api/vertex-server.mjs",
+    "dev:api": "node scripts/dev-api.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start:api": "node api/vertex-server.mjs"
+    "start:api": "node scripts/dev-api.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.99.1",
